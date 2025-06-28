@@ -19,12 +19,9 @@ class ZoomPanView(QGraphicsView):
         self._last_pan_point = QPoint()
 
         # --- NEW: Define zoom limits ---
-        self.min_zoom = 0.25 # Corresponds to 25% zoom
-        self.max_zoom = 4.0  # Corresponds to 400% zoom
+        self.min_zoom = 0.1 # Corresponds to 10% zoom
+        self.max_zoom = 3.0  # Corresponds to 300% zoom
         # --- FIX FOR GRAPHICAL ARTIFACTS ---
-        # This setting tells the view to redraw the entire viewport on every
-        # single change. It is slightly less efficient than the default mode,
-        # but it prevents rendering glitches, trails, and artifacts like the one you saw.
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
     def drawBackground(self, painter, rect):
@@ -118,7 +115,10 @@ class ConnectionItem(QGraphicsPathItem):
         # Set a Z-value to ensure lines are drawn behind nodes for a cleaner look.
         self.setZValue(-1)
         # Set the pen style for the connection line.
-        self.setPen(QPen(QColor(20, 20, 20), 2))  # Dark gray, 2-pixel thick pen
+        self.pen_default = QPen(QColor(20,20,20),2)
+        self.pen_selected = QPen(QColor(255,165,0),3)
+        #make the connection selectable
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
 
     # This method calculates and sets the curved path of the line.
     def update_path(self):
@@ -142,7 +142,24 @@ class ConnectionItem(QGraphicsPathItem):
 
         # Set the calculated path for this item to draw.
         self.setPath(path)
+    def disconnect_nodes(self):
+        # Remove this connection from the lists of both connected nodes.
+        if self in self.start_item.connections:
+            self.start_item.connections.remove(self)
+        if self in self.end_item.connections:
+            self.end_item.connections.remove(self)
 
+    #override paint method to change when connection selected
+    def paint(self, painter:QPainter, option: QStyleOptionGraphicsItem, widget:Optional[QWidget]= None):
+        #update the path to make sure it's the current path
+        self.update_path()
+        #pen selector before we draw the path
+        if self.isSelected():
+            painter.setPen(self.pen_selected)
+        else:
+            painter.setPen(self.pen_default)
+        #draw the actual path
+        painter.drawPath(self.path())
 
 class CustomNode(QGraphicsItem):
     def __init__(self):
@@ -196,6 +213,33 @@ class NodeEditorScene(QGraphicsScene):
         super().__init__(parent)
         self.line_in_progress, self.start_item, self.start_pos = None, None, None
 
+    def keyPressEvent(self, event):
+        # Check if the key pressed is the Delete key.
+        if event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
+            # Get all currently selected items.
+            selected_items = self.selectedItems()
+            # Loop through them to delete them safely.
+            for item in selected_items:
+                # We only want to delete our CustomNode items.
+                if isinstance(item, CustomNode):
+                    # It's crucial to remove connections first.
+                    # We make a copy of the list because we will be modifying it.
+                    for conn in list(item.connections):
+                        # Tell the connection to disconnect from its nodes.
+                        conn.disconnect_nodes()
+                        # Remove the connection item from the scene.
+                        self.removeItem(conn)
+
+                    # After all its connections are gone, remove the node itself.
+                    self.removeItem(item)
+            # Accept the event to signify that we have handled it.
+                elif isinstance(item, ConnectionItem):
+                    item.disconnect_nodes()
+                    self.removeItem(item)
+            event.accept()
+        else:
+            # If any other key was pressed, let the base class handle it.
+            super().keyPressEvent(event)
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             view = self.views()[0]
@@ -254,7 +298,6 @@ class NodeEditorScene(QGraphicsScene):
         super().mouseReleaseEvent(event)
 
 
-# --- 3. The MainWindow Class (with two small changes) ---
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
